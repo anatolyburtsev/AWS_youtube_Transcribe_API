@@ -1,3 +1,9 @@
 def handler(event, context):
-    print("Received event: ", event)
-    return event
+    return {
+        "isBase64Encoded": False,
+        "statusCode": 200,
+        "headers": {
+            "Content-Type": "application/json"
+        },
+        "body": '{"success": "OK"}'
+    }
