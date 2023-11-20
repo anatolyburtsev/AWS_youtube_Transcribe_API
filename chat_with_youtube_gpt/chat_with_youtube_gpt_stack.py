@@ -35,6 +35,10 @@ class ChatWithYoutubeGptStack(Stack):
                                                                         "youtube-transcription-http-api-key")
         http_api_key_secret.grant_read(transcribe_lambda)
 
+        openai_key_secret = secretsmanager.Secret.from_secret_name_v2(self, "OpenAIKeySecret",
+                                                                      "youtube-transcription-openai-key")
+        openai_key_secret.grant_read(transcribe_lambda)
+
         zone_name = os.environ['ZONE_NAME']
         hosted_zone = route53.HostedZone.from_lookup(self, "HostedZone", domain_name=zone_name)
         alb_dns_name = f"youtube-transcriber.{zone_name}"

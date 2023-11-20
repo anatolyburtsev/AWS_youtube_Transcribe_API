@@ -6,7 +6,9 @@ import boto3
 
 from moviepy.editor import AudioFileClip
 from pymonad.either import Right, Left
+from pymonad.tools import curry
 from pytube import YouTube
+from openai import OpenAI
 
 from validations import validate_url_body_param, validate_method_and_path, EarlyExitReasons, validate_api_key
 
@@ -27,12 +29,11 @@ def time_and_log(func, *args, **kwargs):
     result = func(*args, **kwargs)
     elapsed_time = time.time() - start_time
     logger.info(f"{func.__name__} took {elapsed_time:.2f} seconds.")
-    print(f"{func.__name__} took {elapsed_time:.2f} seconds.")
     return result
 
 
 def get_secretsmanager_client():
-    return boto3.client('secretsmanager')
+    return boto3.client('secretsmanager', region_name=os.environ["AWS_REGION"])
 
 
 def handler(event, context):
@@ -44,6 +45,7 @@ def handler(event, context):
         .then(parse_body)
         .then(validate_url_body_param)
         .then(download_audio_by_link)
+        .then(transcribe_audio(get_secretsmanager_client))
         .either(
             process_early_exit,
             process_success
@@ -54,15 +56,42 @@ def handler(event, context):
     return result
 
 
+def get_file_size_in_mb(file_path):
+    size_bytes = os.path.getsize(file_path)
+    size_mb = size_bytes / (1024 * 1024)
+    return size_mb
+
+
+@curry(2)
+def transcribe_audio(get_secretsmanager, mp3_path):
+    try:
+        secretsmanager_client = get_secretsmanager()
+
+        secret_value = secretsmanager_client.get_secret_value(SecretId='youtube-transcription-openai-key')
+        openai_key = json.loads(secret_value['SecretString'])['key']
+
+        openai_client = OpenAI(api_key=openai_key)
+
+        with open(mp3_path, "rb") as audio_file:
+            transcript = time_and_log(
+                openai_client.audio.transcriptions.create, model="whisper-1",
+                file=audio_file
+            )
+            return Right(transcript.text)
+
+    except Exception as e:
+        logger.error(f"Error: {e}")
+        return Left(EarlyExitReasons.INTERNAL_SERVER_ERROR)
+
+
 def download_audio_by_link(youtube_url):
     filename_prefix = time_and_log(video_title, youtube_url)
     mp4_path = f"/tmp/{filename_prefix}.mp4"
-    mp3_path = f"/tmp/{filename_prefix}.mp3"
 
     time_and_log(download_audio, youtube_url, mp4_path)
-    time_and_log(convert_mp4_to_mp3, mp4_path, mp3_path)
+    logger.info(f"mp4 file size: {get_file_size_in_mb(mp4_path)} Mb")
 
-    return mp3_path
+    return mp4_path
 
 
 def parse_body(event):
@@ -75,6 +104,10 @@ def parse_body(event):
 
 def process_early_exit(reason):
     match reason:
+        case EarlyExitReasons.HEALTH_CHECK:
+            response = {"statusCode": 200, "body": json.dumps({"success": "OK"})}
+        case EarlyExitReasons.OPTION_PRE_FLIGHT:
+            response = {"statusCode": 200, "body": json.dumps({"success": "OK"})}
         case EarlyExitReasons.INVALID_JSON:
             response = {
                 "statusCode": 400,
@@ -87,6 +120,16 @@ def process_early_exit(reason):
             response = {
                 "statusCode": 500,
                 "body": json.dumps({"message": "Internal server error"})
+            }
+        case EarlyExitReasons.INVALID_API_KEY:
+            response = {
+                "statusCode": 401,
+                "body": json.dumps({"message": "Invalid API key"})
+            }
+        case EarlyExitReasons.NOT_FOUND:
+            response = {
+                "statusCode": 404,
+                "body": json.dumps({"message": "Not found"})
             }
         case _:
             response = {
@@ -157,11 +200,6 @@ def convert_mp4_to_mp3(input_path: str, output_path: str) -> None:
     audio_clip.write_audiofile(output_path, codec="mp3")
 
 
-def load_api_key_from_secrets_manager():
-    client = boto3.client('secretsmanager')
-    response = client.get_secret_value(SecretId='youtube-transcription-http-api-key')
-    return response['SecretString']
-
-
 if __name__ == "__main__":
-    download_audio_by_link("https://www.youtube.com/watch?v=XGJNo8TpuVA")
+    # download_audio_by_link("https://www.youtube.com/watch?v=XGJNo8TpuVA")
+    transcribe_audio(get_secretsmanager_client, "/tmp/The New Stack and Ops for AI.mp3")
