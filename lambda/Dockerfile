@@ -8,6 +8,6 @@ RUN poetry config virtualenvs.create false
 
 RUN poetry install
 
-COPY app.py ${LAMBDA_TASK_ROOT}
+COPY *.py ${LAMBDA_TASK_ROOT}
 
 CMD ["app.handler"]

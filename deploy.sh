@@ -1,0 +1,4 @@
+export CDK_DEFAULT_ACCOUNT=9999999999
+export CDK_DEFAULT_REGION=us-east-1
+export ZONE_NAME=
+cdk deploy

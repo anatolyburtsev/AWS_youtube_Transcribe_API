@@ -1,0 +1,24 @@
+{
+  "requestContext": {
+    "elb": {
+      "targetGroupArn": "arn:aws:elasticloadbalancing:us-east-1:723351182543:targetgroup/ChatWi-LoadB-VBRPKSLMIPZQ/2ae51d3e9b14fe66"
+    }
+  },
+  "httpMethod": "POST",
+  "path": "/transcribe",
+  "queryStringParameters": {},
+  "headers": {
+    "accept": "*/*",
+    "content-length": "53",
+    "content-type": "application/json",
+    "host": "youtube-transcriber.aburtsev.com",
+    "user-agent": "curl/8.1.2",
+    "x-amzn-trace-id": "Root=1-655af378-175421a51e1d26da782e7335",
+    "x-api-key": "szOBCUQHZ09yApaf86K9g5VF18K2JByx9fWTUN6K",
+    "x-forwarded-for": "154.5.117.99",
+    "x-forwarded-port": "443",
+    "x-forwarded-proto": "https"
+  },
+  "body": "{\"url\":\"https://www.youtube.com/watch?v=XGJNo8TpuVA\"}",
+  "isBase64Encoded": false
+}

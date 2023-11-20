@@ -1,9 +1,15 @@
+import os
+
 from aws_cdk import (
     Stack,
     aws_lambda as lambda_,
-
-    aws_apigateway as apigateway,
-    CfnOutput, Duration
+    aws_route53 as route53,
+    aws_elasticloadbalancingv2 as elbv2,
+    aws_certificatemanager as acm,
+    CfnOutput, Duration,
+    aws_ec2 as ec2,
+    aws_elasticloadbalancingv2_targets as targets,
+    aws_route53_targets as route53_targets,
 )
 from constructs import Construct
 
@@ -20,53 +26,58 @@ class ChatWithYoutubeGptStack(Stack):
             runtime=lambda_.Runtime.FROM_IMAGE,
             code=lambda_.Code.from_asset_image('lambda'),
             handler=lambda_.Handler.FROM_IMAGE,
-            timeout=Duration.minutes(5)
+            timeout=Duration.minutes(15),
+            memory_size=1024,
         )
 
-        # Define the API Gateway
-        api = apigateway.RestApi(
-            self, 'Endpoint',
-            rest_api_name='YoutubeTranscribeAPI'
+        zone_name = os.environ['ZONE_NAME']
+        hosted_zone = route53.HostedZone.from_lookup(self, "HostedZone", domain_name=zone_name)
+        alb_dns_name = f"youtube-transcriber.{zone_name}"
+
+        vpc = ec2.Vpc(
+            self,
+            "VPC",
+            subnet_configuration=[
+                ec2.SubnetConfiguration(
+                    name="VpcSubnetGroup", subnet_type=ec2.SubnetType.PUBLIC
+                )
+            ],
         )
 
-        # Lambda Integration
-        transcribe_integration = apigateway.LambdaIntegration(transcribe_lambda)
-
-        # Define API Key for the POST method
-        api_key = apigateway.ApiKey(
-            self, 'TranscribeApiKey',
-            enabled=True
+        security_group = ec2.SecurityGroup(self, "LoadBalancerSG", vpc=vpc)
+        load_balancer = elbv2.ApplicationLoadBalancer(
+            self,
+            "LoadBalancer",
+            vpc=vpc,
+            internet_facing=True,
+            security_group=security_group,
         )
 
-        # Define Usage Plan
-        usage_plan = apigateway.UsagePlan(
-            self, 'UsagePlan',
-            name='BasicUsagePlan',
-            throttle={
-                'rate_limit': 10,
-                'burst_limit': 2
-            }
+        domainRecords = route53.ARecord(
+            self,
+            "DomainRecord",
+            zone=hosted_zone,
+            record_name=alb_dns_name,
+            target=route53.RecordTarget.from_alias(
+                route53_targets.LoadBalancerTarget(load_balancer)
+            ),
         )
 
-        usage_plan.add_api_key(api_key)
-        usage_plan.add_api_stage(
-            stage=api.deployment_stage
+        certificate = acm.Certificate(
+            self,
+            "Certificate",
+            domain_name=alb_dns_name,
+            validation=acm.CertificateValidation.from_dns(hosted_zone),
         )
 
-        transcribe_resource = api.root.add_resource('transcribe')
-        transcribe_resource.add_method(
-            'POST', transcribe_integration,
-            api_key_required=True
+        listener = load_balancer.add_listener(
+            "LoadBalancerListener", port=443, certificates=[certificate]
         )
 
-        CfnOutput(
-            self, 'ApiUrl',
-            value=api.url,
-            description='The URL of the API Gateway'
+        listener.add_targets(
+            "LoadBalancerTargets",
+            targets=[targets.LambdaTarget(transcribe_lambda)],
+            health_check=elbv2.HealthCheck(enabled=False),
         )
 
-        CfnOutput(
-            self, 'ApiKey',
-            value=api_key.key_id,
-            description='API Key Id for accessing the POST method'
-        )
+        CfnOutput(self, "DomainRecordOutput", value=domainRecords.domain_name)
