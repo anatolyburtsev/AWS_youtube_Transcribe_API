@@ -2,6 +2,8 @@ import json
 import logging
 import os
 import time
+from datetime import datetime
+
 import boto3
 
 from moviepy.editor import AudioFileClip
@@ -36,16 +38,22 @@ def get_secretsmanager_client():
     return boto3.client('secretsmanager', region_name=os.environ["AWS_REGION"])
 
 
+def get_dynamodb_resource():
+    return boto3.resource("dynamodb")
+
+
 def handler(event, context):
     logger.info(f"{event=}")
+    initial_context = {'event': event}
+
     result = (
-        Right(event)
+        Right(initial_context)
         .then(validate_method_and_path)
         .then(validate_api_key(get_secretsmanager_client))
         .then(parse_body)
         .then(validate_url_body_param)
-        .then(download_audio_by_link)
-        .then(transcribe_audio(get_secretsmanager_client))
+        .then(download_audio_by_link(get_dynamodb_resource))
+        .then(transcribe_audio(get_secretsmanager_client, get_dynamodb_resource))
         .either(
             process_early_exit,
             process_success
@@ -62,9 +70,13 @@ def get_file_size_in_mb(file_path):
     return size_mb
 
 
-@curry(2)
-def transcribe_audio(get_secretsmanager, mp3_path):
+@curry(3)
+def transcribe_audio(get_secretsmanager, get_dynamodb, context):
     try:
+        if context.get("transcript"):
+            return Right(context)
+
+        audio_file_path = context.get("mp4_path")
         secretsmanager_client = get_secretsmanager()
 
         secret_value = secretsmanager_client.get_secret_value(SecretId='youtube-transcription-openai-key')
@@ -72,32 +84,66 @@ def transcribe_audio(get_secretsmanager, mp3_path):
 
         openai_client = OpenAI(api_key=openai_key)
 
-        with open(mp3_path, "rb") as audio_file:
+        with open(audio_file_path, "rb") as audio_file:
             transcript = time_and_log(
                 openai_client.audio.transcriptions.create, model="whisper-1",
                 file=audio_file
             )
-            return Right(transcript.text)
+            context["transcript"] = transcript.text
+
+            cache_transcription(get_dynamodb, context)
+            return Right(context)
 
     except Exception as e:
         logger.error(f"Error: {e}")
         return Left(EarlyExitReasons.INTERNAL_SERVER_ERROR)
 
 
-def download_audio_by_link(youtube_url):
+def get_cached_transcription(get_dynamodb, youtube_url):
+    table = get_dynamodb().Table('youtube_transcribes')
+    response = table.get_item(Key={'youtube_url': youtube_url})
+    return dict(response.get('Item')) if response.get("Item") else None
+
+
+def cache_transcription(get_dynamodb, context):
+    table = get_dynamodb().Table('youtube_transcribes')
+    table.put_item(Item={
+        'youtube_url': context.get("youtube_url"),
+        'transcript': context.get("transcript"),
+        'video_title': context.get("video_title"),
+        'date': datetime.now().strftime('%Y-%m-%d')
+    })
+
+
+@curry(2)
+def download_audio_by_link(get_dynamodb, context):
+    youtube_url = context.get("youtube_url")
+    cached_item = get_cached_transcription(get_dynamodb, youtube_url)
+    if cached_item:
+        logger.info(f"Cache hit for {youtube_url}")
+        logger.info(f"{cached_item=}")
+        logger.info(f"Before: {context=}")
+        context.update(cached_item)
+        logger.info(f"After: {context=}")
+        return Right(cached_item)
+
     filename_prefix = time_and_log(video_title, youtube_url)
     mp4_path = f"/tmp/{filename_prefix}.mp4"
 
     time_and_log(download_audio, youtube_url, mp4_path)
     logger.info(f"mp4 file size: {get_file_size_in_mb(mp4_path)} Mb")
 
-    return mp4_path
+    context["video_title"] = filename_prefix
+    context["mp4_path"] = mp4_path
+    return Right(context)
 
 
-def parse_body(event):
+def parse_body(context):
     try:
+        event = context.get("event")
         body = json.loads(event.get("body", '{}'))
-        return Right(body)
+        context["body"] = body
+        return Right(context)
     except json.JSONDecodeError:
         return Left(EarlyExitReasons.INVALID_JSON)
 
@@ -144,12 +190,13 @@ def process_early_exit(reason):
     }
 
 
-def process_success(data):
-    logger.info("Processing success with data: %s", data)
+def process_success(context):
+    transcript = context.get("transcript")
+    logger.info("Processing success with data: %s", transcript)
     return {
         "isBase64Encoded": False,
         "statusCode": 200,
-        "body": json.dumps({"success": "OK", "data": data}),
+        "body": json.dumps({"success": "OK", "transcript": transcript}),
         "headers": {
             "Access-Control-Allow-Origin": "*",
             "Access-Control-Allow-Methods": "POST, OPTIONS",

@@ -4,6 +4,7 @@ from aws_cdk import (
     Stack,
     aws_lambda as lambda_,
     aws_route53 as route53,
+    aws_dynamodb as dynamodb,
     aws_elasticloadbalancingv2 as elbv2,
     aws_certificatemanager as acm,
     CfnOutput, Duration,
@@ -38,6 +39,13 @@ class ChatWithYoutubeGptStack(Stack):
         openai_key_secret = secretsmanager.Secret.from_secret_name_v2(self, "OpenAIKeySecret",
                                                                       "youtube-transcription-openai-key")
         openai_key_secret.grant_read(transcribe_lambda)
+
+        ddb_table = dynamodb.Table(
+            self, "TranscriptionTable",
+            table_name="youtube_transcribes",
+            partition_key=dynamodb.Attribute(name="youtube_url", type=dynamodb.AttributeType.STRING),
+            billing_mode=dynamodb.BillingMode.PAY_PER_REQUEST)
+        ddb_table.grant_read_write_data(transcribe_lambda)
 
         zone_name = os.environ['ZONE_NAME']
         hosted_zone = route53.HostedZone.from_lookup(self, "HostedZone", domain_name=zone_name)
