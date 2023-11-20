@@ -10,6 +10,7 @@ from aws_cdk import (
     aws_ec2 as ec2,
     aws_elasticloadbalancingv2_targets as targets,
     aws_route53_targets as route53_targets,
+    aws_secretsmanager as secretsmanager,
 )
 from constructs import Construct
 
@@ -27,8 +28,12 @@ class ChatWithYoutubeGptStack(Stack):
             code=lambda_.Code.from_asset_image('lambda'),
             handler=lambda_.Handler.FROM_IMAGE,
             timeout=Duration.minutes(15),
-            memory_size=1024,
+            memory_size=1770,
         )
+
+        http_api_key_secret = secretsmanager.Secret.from_secret_name_v2(self, "HttpApiKeySecret",
+                                                                        "youtube-transcription-http-api-key")
+        http_api_key_secret.grant_read(transcribe_lambda)
 
         zone_name = os.environ['ZONE_NAME']
         hosted_zone = route53.HostedZone.from_lookup(self, "HostedZone", domain_name=zone_name)

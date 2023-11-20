@@ -10,3 +10,4 @@ __pycache__
 cdk.out
 
 test_request.sh
+bin/deploy.sh

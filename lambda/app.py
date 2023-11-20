@@ -2,12 +2,13 @@ import json
 import logging
 import os
 import time
+import boto3
 
 from moviepy.editor import AudioFileClip
 from pymonad.either import Right, Left
 from pytube import YouTube
 
-from validations import validate_url_body_param, validate_method_and_path, EarlyExitReasons
+from validations import validate_url_body_param, validate_method_and_path, EarlyExitReasons, validate_api_key
 
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
@@ -30,11 +31,16 @@ def time_and_log(func, *args, **kwargs):
     return result
 
 
+def get_secretsmanager_client():
+    return boto3.client('secretsmanager')
+
+
 def handler(event, context):
     logger.info(f"{event=}")
     result = (
         Right(event)
         .then(validate_method_and_path)
+        .then(validate_api_key(get_secretsmanager_client))
         .then(parse_body)
         .then(validate_url_body_param)
         .then(download_audio_by_link)
@@ -149,6 +155,13 @@ def convert_mp4_to_mp3(input_path: str, output_path: str) -> None:
     """
     audio_clip = AudioFileClip(input_path)
     audio_clip.write_audiofile(output_path, codec="mp3")
+
+
+def load_api_key_from_secrets_manager():
+    client = boto3.client('secretsmanager')
+    response = client.get_secret_value(SecretId='youtube-transcription-http-api-key')
+    return response['SecretString']
+
 
 if __name__ == "__main__":
     download_audio_by_link("https://www.youtube.com/watch?v=XGJNo8TpuVA")
