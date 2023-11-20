@@ -1,8 +1,13 @@
-# Use a prebuilt image with Python runtime
 FROM public.ecr.aws/lambda/python:3.11
 
-# Copy the handler function
+RUN pip install poetry
+
+COPY pyproject.toml poetry.lock ${LAMBDA_TASK_ROOT}
+
+RUN poetry config virtualenvs.create false
+
+RUN poetry install
+
 COPY app.py ${LAMBDA_TASK_ROOT}
 
-# Set the CMD to your handler
 CMD ["app.handler"]
