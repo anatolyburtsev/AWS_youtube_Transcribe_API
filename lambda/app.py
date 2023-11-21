@@ -121,10 +121,7 @@ def download_audio_by_link(get_dynamodb, context):
     cached_item = get_cached_transcription(get_dynamodb, youtube_url)
     if cached_item:
         logger.info(f"Cache hit for {youtube_url}")
-        logger.info(f"{cached_item=}")
-        logger.info(f"Before: {context=}")
         context.update(cached_item)
-        logger.info(f"After: {context=}")
         return Right(cached_item)
 
     filename_prefix = time_and_log(video_title, youtube_url)
@@ -192,11 +189,12 @@ def process_early_exit(reason):
 
 def process_success(context):
     transcript = context.get("transcript")
+    title = context.get("video_title")
     logger.info("Processing success with data: %s", transcript)
     return {
         "isBase64Encoded": False,
         "statusCode": 200,
-        "body": json.dumps({"success": "OK", "transcript": transcript}),
+        "body": json.dumps({"success": "OK", "title": title, "transcript": transcript}),
         "headers": {
             "Access-Control-Allow-Origin": "*",
             "Access-Control-Allow-Methods": "POST, OPTIONS",
